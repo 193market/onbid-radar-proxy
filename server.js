@@ -276,5 +276,25 @@ app.get('/proxy/movable/detail', (req, res) => {
   detailViaList(res, 'OnbidMvastListSrvc/getMvastCltrList', normalizeMovable, req.query.cltrNo);
 });
 
+// ── 이미지 프록시 (CORS 우회) ──────────────────────────────
+app.get('/proxy/img', async (req, res) => {
+  const { url } = req.query;
+  if (!url || !url.startsWith('https://op.onbid')) {
+    return res.status(400).send('invalid url');
+  }
+  try {
+    const imgRes = await fetch(url, {
+      headers: { 'Referer': 'https://www.onbid.co.kr/' },
+      timeout: 8000,
+    });
+    if (!imgRes.ok) return res.status(imgRes.status).send('fetch failed');
+    res.set('Content-Type', imgRes.headers.get('content-type') || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=86400');
+    imgRes.body.pipe(res);
+  } catch (e) {
+    res.status(500).send('proxy error');
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Onbid Proxy running on port ${PORT}`));
