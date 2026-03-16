@@ -15,13 +15,18 @@ function normDate(dt) {
   return String(dt).slice(0, 8); // YYYYMMDDHHMM → YYYYMMDD
 }
 
+function safeNum(val) {
+  const n = parseFloat(String(val || '').replace(/,/g, ''));
+  return (isNaN(n) || n < 0) ? 0 : n;
+}
+
 function calcDpst(minBid) {
-  return String(Math.floor(parseFloat(minBid || 0) * 0.1));
+  return String(Math.floor(safeNum(minBid) * 0.1));
 }
 
 function normalizeRealestate(item) {
   if (!item || !item.cltrMngNo) return item;
-  const minBid = item.lowstBidPrcIndctCont || '0';
+  const minBid = safeNum(item.lowstBidPrcIndctCont);  // 비숫자 문자열이면 0 반환
   return {
     ...item,
     cltrNo: item.cltrMngNo,
