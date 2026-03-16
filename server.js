@@ -8,15 +8,166 @@ app.use(cors());
 const SERVICE_KEY = 'xsG0WMPtWS1mUarzKPkfhWjUUvyKIqfBF34M5NHtM7PcQykB9r9bfji96dhrfkH0peDerZ6iDfVqwSoYS9SEcQ==';
 const BASE = 'https://apis.data.go.kr/B010003';
 
+// ── 필드 정규화 (차세대 API → 프론트엔드 호환 필드명) ──────────────
+
+function normDate(dt) {
+  if (!dt) return '';
+  return String(dt).slice(0, 8); // YYYYMMDDHHMM → YYYYMMDD
+}
+
+function calcDpst(minBid) {
+  return String(Math.floor(parseFloat(minBid || 0) * 0.1));
+}
+
+function normalizeRealestate(item) {
+  if (!item || !item.cltrMngNo) return item;
+  const minBid = item.lowstBidPrcIndctCont || '0';
+  return {
+    ...item,
+    cltrNo: item.cltrMngNo,
+    cltrNm: item.onbidCltrNm,
+    cltrKndNm: item.cltrUsgSclsCtgrNm || item.cltrUsgMclsCtgrNm || '부동산',
+    apprAmt: String(item.apslEvlAmt || 0),
+    minBidAmt: String(minBid),
+    dpstAmt: calcDpst(minBid),
+    forfeitCnt: String(item.usbdNft || 0),
+    stDt: normDate(item.cltrBidBgngDt),
+    enDt: normDate(item.cltrBidEndDt),
+    sidoNm: item.lctnSdnm,
+    sigunguNm: item.lctnSggnm,
+    eupmyundongNm: item.lctnEmdNm,
+    pbancClsfNm: item.prptDivNm,
+    bddprNm: item.bidDivNm,
+    ctrtMthdNm: item.dspsMthodNm,
+    dspsInstNm: item.exctOrgNm,
+    cltrMgmtInstNm: item.rqstOrgNm,
+    cltrAr: String(item.bldSqms || item.landSqms || ''),
+    lndAr: String(item.landSqms || ''),
+    bldgAr: String(item.bldSqms || ''),
+    imgUrl: item.thnlImgUrlAdr || '',
+  };
+}
+
+function normalizeCar(item) {
+  if (!item || !item.cltrMngNo) return item;
+  const minBid = item.lowstBidPrcIndctCont || '0';
+  const yearMatch = (item.onbidCltrNm || '').match(/(\d{4})년식/);
+  return {
+    ...item,
+    cltrNo: item.cltrMngNo,
+    cltrNm: item.onbidCltrNm,
+    cltrKndNm: item.cltrUsgSclsCtgrNm || item.cltrUsgMclsCtgrNm || '차량',
+    apprAmt: String(item.apslEvlAmt || 0),
+    minBidAmt: String(minBid),
+    dpstAmt: calcDpst(minBid),
+    forfeitCnt: String(item.usbdNft || 0),
+    stDt: normDate(item.cltrBidBgngDt),
+    enDt: normDate(item.cltrBidEndDt),
+    sidoNm: item.lctnSdnm,
+    sigunguNm: item.lctnSggnm,
+    eupmyundongNm: item.lctnEmdNm,
+    pbancClsfNm: item.prptDivNm,
+    bddprNm: item.bidDivNm,
+    ctrtMthodNm: item.dspsMthodNm,
+    dspsInstNm: item.exctOrgNm,
+    cltrMgmtInstNm: item.rqstOrgNm,
+    mfgYr: yearMatch ? yearMatch[1] : null,
+    carMakerNm: item.cltrMkrNm,
+    carModelNm: item.carVhknNm || item.carMdlNm,
+    imgUrl: item.thnlImgUrlAdr || '',
+  };
+}
+
+function normalizeMovable(item) {
+  if (!item || !item.cltrMngNo) return item;
+  const minBid = item.lowstBidPrcIndctCont || '0';
+  return {
+    ...item,
+    cltrNo: item.cltrMngNo,
+    cltrNm: item.onbidCltrNm,
+    cltrKndNm: item.cltrUsgSclsCtgrNm || item.cltrUsgMclsCtgrNm || '동산',
+    apprAmt: String(item.apslEvlAmt || 0),
+    minBidAmt: String(minBid),
+    dpstAmt: calcDpst(minBid),
+    forfeitCnt: String(item.usbdNft || 0),
+    stDt: normDate(item.cltrBidBgngDt),
+    enDt: normDate(item.cltrBidEndDt),
+    sidoNm: item.lctnSdnm,
+    sigunguNm: item.lctnSggnm,
+    eupmyundongNm: item.lctnEmdNm,
+    pbancClsfNm: item.prptDivNm,
+    bddprNm: item.bidDivNm,
+    ctrtMthdNm: item.dspsMthodNm,
+    dspsInstNm: item.exctOrgNm,
+    cltrMgmtInstNm: item.rqstOrgNm,
+    mvastCnt: item.qntyCont,
+    mvastUnit: '개',
+    mvastLoc: [item.lctnSdnm, item.lctnSggnm, item.lctnEmdNm].filter(Boolean).join(' '),
+    imgUrl: item.thnlImgUrlAdr || '',
+  };
+}
+
+// ── 차세대 API 호출 (다중 prptDivCd 병렬 조회 후 합산) ──────────────
+
+const PRPT_DIV_CDS = ['0007', '0010', '0002']; // 압류재산, 국유재산, 공유재산
+
+async function proxyGetNew(res, endpoint, normalizer, params) {
+  const { pageNo = 1, numOfRows = 20, sido = '', sigungu = '' } = params;
+  const perType = Math.max(1, Math.ceil(numOfRows / PRPT_DIV_CDS.length));
+
+  try {
+    const calls = PRPT_DIV_CDS.map(prptDivCd => {
+      const qs = new URLSearchParams({
+        serviceKey: SERVICE_KEY,
+        resultType: 'json',
+        pageNo,
+        numOfRows: perType,
+        prptDivCd,
+        dspsMthodCd: '0001', // 매각
+        bidDivCd: '0001',    // 전자입찰
+        ...(sido ? { lctnSdnm: sido } : {}),
+        ...(sigungu ? { lctnSggnm: sigungu } : {}),
+      }).toString();
+      const url = `${BASE}/${endpoint}?${qs}`;
+      return fetch(url, { timeout: 15000 })
+        .then(r => r.json())
+        .catch(() => null);
+    });
+
+    const results = await Promise.all(calls);
+    let allItems = [];
+    let totalCount = 0;
+
+    for (const json of results) {
+      if (!json) continue;
+      const body = json?.body || json;
+      const raw = body?.items?.item || body?.items || [];
+      const arr = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
+      allItems = allItems.concat(arr.map(normalizer).filter(i => i && i.cltrNo));
+      totalCount += parseInt(body?.totalCount || 0);
+    }
+
+    // 입찰 종료일 오름차순 정렬 (마감 임박 순)
+    allItems.sort((a, b) => (a.enDt || '').localeCompare(b.enDt || ''));
+
+    res.json({ items: allItems, totalCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message, items: [] });
+  }
+}
+
+// ── 구형(공고/입찰결과/국유지/비축) API 호출 ──────────────────────────
+
 async function proxyGet(res, endpoint, params) {
   const qs = new URLSearchParams({ serviceKey: SERVICE_KEY, type: 'json', ...params }).toString();
   const url = `${BASE}/${endpoint}?${qs}`;
   try {
-    const r = await fetch(url, { timeout: 8000 });
+    const r = await fetch(url, { timeout: 15000 });
     const text = await r.text();
     let json;
-    try { json = JSON.parse(text); } catch { return res.status(502).json({ error: 'Invalid JSON', raw: text.slice(0, 200) }); }
-    // 공공데이터 응답 정규화
+    try { json = JSON.parse(text); } catch {
+      return res.status(502).json({ error: 'Invalid JSON', raw: text.slice(0, 200) });
+    }
     const body = json?.response?.body || json?.body || json;
     const items = body?.items?.item || body?.items || [];
     const totalCount = body?.totalCount || 0;
@@ -26,27 +177,30 @@ async function proxyGet(res, endpoint, params) {
   }
 }
 
+// ── 목록 API ──────────────────────────────────────────────────────────
+
 // 부동산 물건목록
 app.get('/proxy/realestate', (req, res) => {
-  const { pageNo = 1, numOfRows = 20, sido = '' } = req.query;
-  const params = { pageNo, numOfRows };
-  if (sido) params.sido = sido;
-  proxyGet(res, 'OnbidRlstListSrvc/getOnbidRlstList', params);
+  const { pageNo = 1, numOfRows = 20, sido = '', sigungu = '' } = req.query;
+  proxyGetNew(res, 'OnbidRlstListSrvc/getRlstCltrList', normalizeRealestate, { pageNo, numOfRows, sido, sigungu });
 });
 
 // 차량 물건목록
 app.get('/proxy/car', (req, res) => {
-  proxyGet(res, 'OnbidCarListSrvc/getOnbidCarList', { pageNo: req.query.pageNo || 1, numOfRows: req.query.numOfRows || 20 });
+  const { pageNo = 1, numOfRows = 20 } = req.query;
+  proxyGetNew(res, 'OnbidCarListSrvc/getCarCltrList', normalizeCar, { pageNo, numOfRows });
 });
 
 // 동산 물건목록
 app.get('/proxy/movable', (req, res) => {
-  proxyGet(res, 'OnbidMvastListSrvc/getOnbidMvastList', { pageNo: req.query.pageNo || 1, numOfRows: req.query.numOfRows || 20 });
+  const { pageNo = 1, numOfRows = 20, sido = '' } = req.query;
+  proxyGetNew(res, 'OnbidMvastListSrvc/getMvastCltrList', normalizeMovable, { pageNo, numOfRows, sido });
 });
 
 // 공고목록
 app.get('/proxy/announcement', (req, res) => {
-  proxyGet(res, 'OnbidPbancListSrvc/getOnbidPbancList', { pageNo: req.query.pageNo || 1, numOfRows: req.query.numOfRows || 30 });
+  const { pageNo = 1, numOfRows = 50 } = req.query;
+  proxyGet(res, 'OnbidPbancListSrvc/getOnbidPbancList', { pageNo, numOfRows });
 });
 
 // 입찰결과목록
@@ -56,66 +210,65 @@ app.get('/proxy/bidresult', (req, res) => {
 
 // 국유지 개발현황
 app.get('/proxy/govland', (req, res) => {
-  proxyGet(res, 'GvwsDistDvlp/getGvwsDistDvlpList', { pageNo: req.query.pageNo || 1, numOfRows: req.query.numOfRows || 20 });
+  const { pageNo = 1, numOfRows = 20 } = req.query;
+  proxyGet(res, 'GvwsDistDvlp/getGvwsDistDvlpList', { pageNo, numOfRows });
 });
 
 // 비축부동산 명세
 app.get('/proxy/reserve', (req, res) => {
-  proxyGet(res, 'kamcoRlctRlst/getKamcoRlctRlstList', { pageNo: req.query.pageNo || 1, numOfRows: req.query.numOfRows || 20 });
+  const { pageNo = 1, numOfRows = 20 } = req.query;
+  proxyGet(res, 'kamcoRlctRlst/getKamcoRlctRlstList', { pageNo, numOfRows });
 });
 
-// ── money-aura: 환율 (수출입은행) ──
-app.get('/proxy/exchange', async (req, res) => {
-  const EXIM_KEY = 'C5Qu02DnCxRkltde9Kk6VevXpaBeJWAj';
+// ── 상세 API ──────────────────────────────────────────────────────────
+// 상세 API는 목록 조회 결과로 대체 (cltrMngNo로 재조회)
+
+async function detailViaList(res, endpoint, normalizer, cltrNo) {
   try {
-    // 최근 영업일 탐색 (오늘~5일 전)
-    for (let i = 0; i < 6; i++) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const ds = `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-      const url = `https://www.koreaexim.go.kr/site/program/financial/exchangeJSON?authkey=${EXIM_KEY}&searchdate=${ds}&data=AP01`;
-      const r = await fetch(url, { redirect: 'follow', timeout: 8000 });
-      const text = await r.text();
-      if (!text || text.trim() === '' || text.trim() === '[]') continue;
-      let json; try { json = JSON.parse(text); } catch { continue; }
-      if (!Array.isArray(json) || json.length === 0) continue;
-      const targets = ['USD', 'JPY(100)', 'EUR'];
-      const result = json.filter(item => targets.includes(item.cur_nm) || targets.includes(item.cur_unit));
-      if (result.length > 0) return res.json({ data: result, date: ds });
+    const calls = PRPT_DIV_CDS.map(prptDivCd => {
+      const qs = new URLSearchParams({
+        serviceKey: SERVICE_KEY,
+        resultType: 'json',
+        pageNo: 1,
+        numOfRows: 1,
+        prptDivCd,
+        dspsMthodCd: '0001',
+        bidDivCd: '0001',
+        onbidCltrMngNo: cltrNo,
+      }).toString();
+      return fetch(`${BASE}/${endpoint}?${qs}`, { timeout: 15000 })
+        .then(r => r.json())
+        .catch(() => null);
+    });
+
+    const results = await Promise.all(calls);
+    for (const json of results) {
+      if (!json) continue;
+      const body = json?.body || json;
+      const raw = body?.items?.item || body?.items || [];
+      const arr = Array.isArray(raw) ? raw : [raw];
+      const item = arr.find(i => i && i.cltrMngNo === cltrNo);
+      if (item) return res.json({ items: [normalizer(item)] });
     }
-    res.status(502).json({ error: 'No exchange data available' });
+    res.json({ items: [] });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, items: [] });
   }
+}
+
+app.get('/proxy/realestate/detail', (req, res) => {
+  if (!req.query.cltrNo) return res.status(400).json({ error: 'cltrNo required', items: [] });
+  detailViaList(res, 'OnbidRlstListSrvc/getRlstCltrList', normalizeRealestate, req.query.cltrNo);
 });
 
-// ── money-aura: 금감원 예금 금리 ──
-app.get('/proxy/fss-deposit', async (req, res) => {
-  const FSS_KEY = '7cdf933c0e7a5e910842eae90b292d9b';
-  try {
-    const r = await fetch(
-      `https://finlife.fss.or.kr/finlifeapi/depositProductsSearch.json?auth=${FSS_KEY}&topFinGrpNo=020000&pageNo=1`,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000 }
-    );
-    const json = await r.json();
-    res.json(json);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+app.get('/proxy/car/detail', (req, res) => {
+  if (!req.query.cltrNo) return res.status(400).json({ error: 'cltrNo required', items: [] });
+  detailViaList(res, 'OnbidCarListSrvc/getCarCltrList', normalizeCar, req.query.cltrNo);
 });
 
-// ── money-aura: 금감원 적금 금리 ──
-app.get('/proxy/fss-saving', async (req, res) => {
-  const FSS_KEY = '7cdf933c0e7a5e910842eae90b292d9b';
-  try {
-    const r = await fetch(
-      `https://finlife.fss.or.kr/finlifeapi/savingProductsSearch.json?auth=${FSS_KEY}&topFinGrpNo=020000&pageNo=1`,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: 10000 }
-    );
-    const json = await r.json();
-    res.json(json);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+app.get('/proxy/movable/detail', (req, res) => {
+  if (!req.query.cltrNo) return res.status(400).json({ error: 'cltrNo required', items: [] });
+  detailViaList(res, 'OnbidMvastListSrvc/getMvastCltrList', normalizeMovable, req.query.cltrNo);
 });
 
 const PORT = process.env.PORT || 3000;
