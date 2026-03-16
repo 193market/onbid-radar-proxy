@@ -24,32 +24,57 @@ function calcDpst(minBid) {
   return String(Math.floor(safeNum(minBid) * 0.1));
 }
 
+function normTime(dt) {
+  if (!dt) return '';
+  const s = String(dt);
+  if (s.length >= 12) return `${s.slice(8,10)}:${s.slice(10,12)}`;
+  return '';
+}
+
+function yn(v) { return v === 'Y' ? '✅ 가능' : v === 'N' ? '❌ 불가' : ''; }
+
 function normalizeRealestate(item) {
   if (!item || !item.cltrMngNo) return item;
-  const minBid = safeNum(item.lowstBidPrcIndctCont);  // 비숫자 문자열이면 0 반환
+  const minBid = safeNum(item.lowstBidPrcIndctCont);
+  const apprAmt = safeNum(item.apslEvlAmt);
+  const cltrNo = item.cltrMngNo;
   return {
     ...item,
-    cltrNo: item.cltrMngNo,
+    cltrNo,
     cltrNm: item.onbidCltrNm,
     cltrKndNm: item.cltrUsgSclsCtgrNm || item.cltrUsgMclsCtgrNm || '부동산',
-    apprAmt: String(item.apslEvlAmt || 0),
+    cltrMclsNm: item.cltrUsgMclsCtgrNm || '',
+    cltrSclsNm: item.cltrUsgSclsCtgrNm || '',
+    apprAmt: String(apprAmt),
     minBidAmt: String(minBid),
     dpstAmt: calcDpst(minBid),
     forfeitCnt: String(item.usbdNft || 0),
     stDt: normDate(item.cltrBidBgngDt),
     enDt: normDate(item.cltrBidEndDt),
+    stTime: normTime(item.cltrBidBgngDt),
+    enTime: normTime(item.cltrBidEndDt),
     sidoNm: item.lctnSdnm,
     sigunguNm: item.lctnSggnm,
     eupmyundongNm: item.lctnEmdNm,
     pbancClsfNm: item.prptDivNm,
     bddprNm: item.bidDivNm,
+    bidMthodNm: item.bidMthodNm || '',
+    cptnMthodNm: item.cptnMthodNm || '',
+    totalamtUnpcDivNm: item.totalamtUnpcDivNm || '',
     ctrtMthdNm: item.dspsMthodNm,
     dspsInstNm: item.exctOrgNm,
     cltrMgmtInstNm: item.rqstOrgNm,
     cltrAr: String(item.bldSqms || item.landSqms || ''),
     lndAr: String(item.landSqms || ''),
     bldgAr: String(item.bldSqms || ''),
+    collbBidPsblYn: yn(item.collbBidPsblYn),
+    twtmGthrBidPsblYn: yn(item.twtmGthrBidPsblYn),
+    subtBidPsblYn: yn(item.subtBidPsblYn),
+    alcYn: item.alcYn === 'Y' ? '✅ 있음' : '없음',
+    batcBidYn: item.batcBidYn === 'Y' ? '✅ 일괄입찰' : '',
+    evcRsbyTrgtCont: item.evcRsbyTrgtCont || '',
     imgUrl: item.thnlImgUrlAdr || '',
+    onbidUrl: `https://www.onbid.co.kr/op/cta/cltrdtl/collateralRealEstateDetail.do?cltrNo=${cltrNo}`,
   };
 }
 
